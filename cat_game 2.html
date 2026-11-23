@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Котик и Хомяк (Mobile)</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #87c6ff; font-family: Arial, sans-serif; user-select: none; }
+    #game { display: block; width: 100%; height: 100%; }
+    #hud { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); text-align: center; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,.5); pointer-events: none; z-index: 3; }
+    #score { font-size: 28px; font-weight: bold; }
+    #timer { font-size: 18px; margin-top: 4px; }
+    #stamBox { width: 200px; height: 12px; background: rgba(0,0,0,.35); border-radius: 6px; margin: 8px auto 0; overflow: hidden; }
+    #stamFill { height: 100%; width: 100%; background: linear-gradient(90deg, #7CFC00, #ffd75e); border-radius: 6px; }
+    #hint { margin-top: 6px; font-size: 13px; opacity: 0.9; }
+    #boostBtn { position: fixed; right: 16px; bottom: 90px; width: 64px; height: 64px; border-radius: 50%; background: radial-gradient(circle, #e03535, #c02a2a); color: #fff; border: 0; font-size: 22px; box-shadow: 0 4px 12px rgba(0,0,0,.25); z-index: 4; cursor: pointer; }
+    #boostBtn:active { transform: scale(0.96); }
+    #soundBtn { position: fixed; left: 16px; bottom: 90px; width: 52px; height: 52px; border-radius: 12px; background: rgba(255,255,255,.85); color: #333; border: 0; font-size: 16px; box-shadow: 0 4px 12px rgba(0,0,0,.2); z-index: 4; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    #over { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.65); z-index: 5; }
+    #overBox { background: #fff; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
+    #overBox h1 { margin: 0 0 8px; font-size: 24px; }
+    #overBox p { margin: 4px 0 16px; font-size: 16px; }
+    #again { font-size: 18px; padding: 10px 26px; border: 0; border-radius: 8px; background: #e03535; color: #fff; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <div id="score">Поймано: 0</div>
+    <div id="timer">60.0</div>
+    <div id="stamBox"><div id="stamFill"></div></div>
+    <div id="hint">Коснись экрана — кот побежит туда • Кнопка — рывок</div>
+  </div>
+
+  <button id="boostBtn" title="Рывок">⚡</button>
+  <button id="soundBtn" title="Звук вкл/выкл">🔇</button>
+
+  <div id="over">
+    <div id="overBox">
+      <h1>Время вышло!</h1>
+      <p id="finalScore"></p>
+      <button id="again">Играть снова</button>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+
+    const cv = document.getElementById('game');
+    const ctx = cv.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const timerEl = document.getElementById('timer');
+    const stamFill = document.getElementById('stamFill');
+    const hintEl = document.getElementById('hint');
+    const boostBtn = document.getElementById('boostBtn');
+    const soundBtn = document.getElementById('soundBtn');
+    const overEl = document.getElementById('over');
+    const finalEl = document.getElementById('finalScore');
+    const againBtn = document.getElementById('again');
+
+    let W = innerWidth, H = innerHeight;
+    function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; }
+    addEventListener('resize', resize);
+    resize();
+
+    // Сенсорные координаты
+    let touchX = W * 0.3, touchY = H * 0.55;
+    let isBoosting = false;
+    let soundOn = true;
+
+    addEventListener('touchmove', e => {
+      if (e.touches[0]) { touchX = e.touches[0].clientX; touchY = e.touches[0].clientY; }
+    }, { passive: true });
+
+    addEventListener('touchend', () => {
+      // при отпускании пальца кот продолжает бежать к последней точке
+    }, { passive:true });
+
+    // Клик мышкой как запасной вариант (для планшетов)
+    addEventListener('mousemove', e => { touchX = e.clientX; touchY = e.clientY; });
+
+    boostBtn.addEventListener('touchstart', () => isBoosting = true);
+    boostBtn.addEventListener('touchend', () => isBoosting = false);
+    boostBtn.addEventListener('mousedown', () => isBoosting = true);
+    boostBtn.addEventListener('mouseup', () => isBoosting = false);
+
+    soundBtn.addEventListener('click', () => { soundOn = !soundOn; soundBtn.textContent = soundOn ? '🔊' : '🔇'; });
+    againBtn.addEventListener('click', resetGame);
+
+    // Аудио (WebAudio)
+    let AC = null;
+    function initAudio(){
+      if (AC) return;
+      try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; }
+    }
+    function squeak(){
+      if (!AC || !soundOn) return;
+      const t = AC.currentTime;
+      const o = AC.createOscillator(), g = AC.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(1400, t);
+      o.frequency.linearRampToValueAtTime(2000, t + 0.08);
+      o.frequency.linearRampToValueAtTime(1200, t + 0.22);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+      o.connect(g); g.connect(AC.destination);
+      o.start(t); o.stop(t + 0.3);
+    }
+    function meow(){
+      if (!AC || !soundOn) return;
+      const t = AC.currentTime;
+      const o = AC.createOscillator(), f = AC.createBiquadFilter(), g = AC.createGain();
+      o.type = 'sawtooth'; f.type = 'lowpass'; f.frequency.value = 1400;
+      o.frequency.setValueAtTime(520, t);
+      o.frequency.linearRampToValueAtTime(880, t + 0.18);
+      o.frequency.linearRampToValueAtTime(660, t + 0.45);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.18, t + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+      o.connect(f); f.connect(g); g.connect(AC.destination);
+      o.start(t); o.stop(t + 0.55);
+    }
+
+    function GROUND() { return H * 0.78; }
+    function bounds() { return { l: 30, t: 30, r: W - 30, b: GROUND() - 10 }; }
+
+    const cat = { x: 0, y: 0, dir: 1, phase: 0, moving: false, blink: 0, blinkT: 2, happy: 0 };
+    let ham = null;
+    let particles = [];
+    let floatTexts = [];
+    let score = 0, streak = 0, lastCatch = -99, timeLeft = 60, playing = true;
+    let stamina = 100, timeNow = 0;
+
+    function spawnHam() {
+      const b = bounds();
+      let x, y, tries = 0;
+      do {
+        x = b.l + Math.random() * (b.r - b.l);
+        y = b.t + Math.random() * (b.b - b.t);
+        tries++;
+      } while (Math.hypot(x - cat.x, y - cat.y) < 320 && tries < 50);
+      ham = { x: x, y: y, dir: 1, phase: 0, state: 'walk', panic: 0, tx: x, ty: y, retarget: 0, squeakT: 0 };
+    }
+
+    function resetGame() {
+      score = 0; streak = 0; lastCatch = -99; timeLeft = 60; stamina = 100;
+      particles = []; floatTexts = [];
+      cat.x = W * 0.3; cat.y = GROUND() - 40;
+      spawnHam();
+      playing = true;
+      overEl.style.display = 'none';
+      isBoosting = false;
+      initAudio(); // пробуждаем аудио при рестарте
+    }
+    resetGame();
+
+    function burstHearts(x, y, n) {
+      for (let i = 0; i < n; i++) {
+        particles.push({
+          x: x + (Math.random() - 0.5) * 40,
+          y: y - 20 - Math.random() * 30,
+          vx: (Math.random() - 0.5) * 60,
+          vy: -40 - Math.random() * 60,
+          life: 1 + Math.random() * 0.5
+        });
+      }
+    }
+
+    function update(dt) {
+      const b = bounds();
+
+      // Выносливость и рывок
+      if (isBoosting) stamina = Math.max(0, stamina - 48 * dt);
+      else stamina = Math.min(100, stamina + 22 * dt);
+
+      // Кот бежит к точке касания
+      const tx = Math.max(b.l, Math.min(b.r, touchX));
+      const ty = Math.max(b.t, Math.min(b.b, touchY));
+      const dx = tx - cat.x, dy = ty - cat.y;
+      const dist = Math.hypot(dx, dy);
+      const sp = 280 * (isBoosting ? 1.8 : 1) * Math.min(1, dist / 70);
+      if (dist > 3) {
+        cat.x += dx / dist * sp * dt;
+        cat.y += dy / dist * sp * dt;
+        if (Math.abs(dx) > 4) cat.dir = dx > 0 ? 1 : -1;
+      }
+      cat.moving = dist > 8;
+      cat.phase += dt * (cat.moving ? (isBoosting ? 24 : 12) : 2.5);
+      cat.x = Math.max(b.l, Math.min(b.r, cat.x));
+      cat.y = Math.max(b.t, Math.min(b.b, cat.y));
+
+      // Моргание
+      cat.blinkT -= dt;
+      if (cat.blinkT <= 0) { cat.blink = 0.12; cat.blinkT = 2 + Math.random() * 3; }
+      if (cat.blink > 0) cat.blink -= dt;
+      if (cat.happy > 0) cat.happy -= dt;
+
+      // Хомяк
+      const hd = Math.hypot(ham.x - cat.x, ham.y - cat.y);
+      if (hd < 260) {
+        ham.state = 'flee';
+        ham.panic = Math.min(1, ham.panic + dt * 4);
+        let ang = Math.atan2(ham.y - cat.y, ham.x - cat.x);
+        ang += Math.sin(timeNow * 3 + ham.phase) * 0.6;
+        const m = 70;
+        let px = 0, py = 0;
+        if (ham.x < b.l + m) px = (b.l + m - ham.x) / m;
+        if (ham.x > b.r - m) px = -(ham.x - (b.r - m)) / m;
+        if (ham.y < b.t + m) py = (b.t + m - ham.y) / m;
+        if (ham.y > b.b - m) py = -(ham.y - (b.b - m)) / m;
+        const fsp = 290 + 35 * ham.panic;
+        let vx = Math.cos(ang) * fsp + px * 160;
+        let vy = Math.sin(ang) * fsp + py * 160;
+        const vl = Math.hypot(vx, vy) || 1;
+        ham.x += vx / vl * Math.min(vl, fsp) * dt;
+        ham.y += vy / vl * Math.min(vl, fsp) * dt;
+        if (Math.abs(vx) > 10) ham.dir = vx > 0 ? 1 : -1;
+        ham.squeakT -= dt;
+        if (ham.squeakT <= 0 && hd < 180) { squeak(); ham.squeakT = 0.6 + Math.random() * 0.8; }
+      } else {
+        ham.state = 'walk';
+        ham.panic = Math.max(0, ham.panic - dt * 2);
+        ham.retarget -= dt;
+        if (ham.retarget <= 0) {
+          ham.retarget = 1.5 +
